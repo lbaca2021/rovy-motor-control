@@ -12,7 +12,7 @@ using namespace std;
 
 #define MOTOR_LEFT_PWM  26 // BCM=12, physical=32
 #define MOTOR_LEFT_DIR	22 // BCM=6,  physical=31
-#define MOTOR_RIGHT_PWM 24 // BCM=19, physical=35
+#define MOTOR_RIGHT_PWM 23 // BCM=13, physical=33
 #define MOTOR_RIGHT_DIR	27 // BCM=16, physical=36
 
 // mcp23017
