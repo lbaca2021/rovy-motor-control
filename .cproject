@@ -82,6 +82,8 @@
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/gpio-mutex/src}&quot;"/>
                                     									
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/mpu-9250/src}&quot;"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="&quot;${workspace_loc:/utils/src}&quot;"/>
                                     								
                                 </option>
                                 								
@@ -110,6 +112,8 @@
                                     <listOptionValue builtIn="false" value="gpio-mutex"/>
                                     									
                                     <listOptionValue builtIn="false" value="mpu-9250"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="utils"/>
                                     								
                                 </option>
                                 								
@@ -120,6 +124,8 @@
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/gpio-mutex/Debug}&quot;"/>
                                     									
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/mpu-9250/Debug}&quot;"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="&quot;${workspace_loc:/utils/Debug}&quot;"/>
                                     								
                                 </option>
                                 								
@@ -242,6 +248,8 @@
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/gpio-mutex/src}&quot;"/>
                                     									
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/mpu-9250/src}&quot;"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="&quot;${workspace_loc:/utils/src}&quot;"/>
                                     								
                                 </option>
                                 								
@@ -264,6 +272,8 @@
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/gpio-mutex/Release}&quot;"/>
                                     									
                                     <listOptionValue builtIn="false" value="&quot;${workspace_loc:/mpu-9250/Release}&quot;"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="&quot;${workspace_loc:/utils/Release}&quot;"/>
                                     								
                                 </option>
                                 								
@@ -280,6 +290,8 @@
                                     <listOptionValue builtIn="false" value="gpio-mutex"/>
                                     									
                                     <listOptionValue builtIn="false" value="mpu-9250"/>
+                                    									
+                                    <listOptionValue builtIn="false" value="utils"/>
                                     								
                                 </option>
                                 								

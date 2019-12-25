@@ -19,14 +19,12 @@ using namespace std;
 #define MOTOR_RIGHT_PWM 23 // BCM=13, physical=33
 #define MOTOR_RIGHT_DIR	27 // BCM=16, physical=36
 
-#define LOOP_INTERVAL_MS 50
-
 // mcp23017
 #define PIN_12V_ENABLE	110
 
-static bool stopspeedControlThread = false;
+static bool stopSpeedControlThread = false;
 static bool orientationThreadInit = false;
-static double speed = 0;
+static double targetSpeed = 0;
 static pthread_mutex_t speedLock = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
 
 void driverVoltageOn() {
@@ -87,20 +85,20 @@ void *speedControlThread(void *vargp) {
 	}
 	imu.setMyMagCalibration();
 
-    // setup PID controller
-    PID pid = PID(LOOP_INTERVAL_MS, 500, -500, 0.1, 0, 0.1);
-
+	PID pid;
 	orientationThreadInit = true;
 	bool driving = false;
+	double speed = 0;
 
-	while (!stopspeedControlThread) {
-		if (speed == 0) {
+	while (!stopSpeedControlThread) {
+		if (targetSpeed == 0) {
 			driving = false;
+			imu.calibrateGyro();
 		} else {
-			// first time driving: reset PID and set fix angle
+			// first time driving: setup PID controller
 			if (!driving) {
-				pid.reset();
-				imu.setFixAngle();
+				pid = PID(20, 1024, -1024, 100, 0.7, 0.002);
+				speed = 0;
 			}
 			driving = true;
 		}
@@ -123,17 +121,21 @@ void *speedControlThread(void *vargp) {
 			}
 
 			pthread_mutex_lock(&speedLock);
-			left += speed;
-			right += speed;
+			if (speed < targetSpeed) {
+				speed += min(50.0, targetSpeed - speed);
+			} else if (speed > targetSpeed) {
+				speed -= min(50.0, speed - targetSpeed);
+			}
 			pthread_mutex_unlock(&speedLock);
 
-			if (!stopspeedControlThread) {
-//				applySpeedToWheels(left, right);
+			left += speed;
+			right += speed;
+
+			if (!stopSpeedControlThread && targetSpeed != 0) {
+				applySpeedToWheels(left, right);
 //				printf("%f,%f,%f,%f\n", angleDelta, diff, left, right);
 			}
 		}
-
-		delay(LOOP_INTERVAL_MS);
 	}
 
     return NULL;
@@ -172,8 +174,19 @@ int main(int argc, char *argv[]) {
 		delay(100);
 	}
 
-//	cout << "Init done!" << endl;
-	speed = 250;
+	cout << "Init done!" << endl;
+
+//	// testing loop
+//	while (1) {
+//		delay(1000 * 7);
+//		motorsStop();
+//		driverVoltageOn();
+//		speed = 500;
+//		delay(1000 * 200);
+//		motorsStop();
+//		driverVoltageOff();
+//		speed = 0;
+//	}
 
 	motorsStop();
 	driverVoltageOn();
@@ -184,24 +197,24 @@ int main(int argc, char *argv[]) {
 		switch (c) {
 		case 'w':
 	    	pthread_mutex_lock(&speedLock);
-	    	speed += 100;
+	    	targetSpeed += 100;
 	    	pthread_mutex_unlock(&speedLock);
 			break;
 		case 's':
 	    	pthread_mutex_lock(&speedLock);
-	    	speed -= 100;
+	    	targetSpeed -= 100;
 	    	pthread_mutex_unlock(&speedLock);
 			break;
 		case ' ':
 			motorsStop();
 	    	pthread_mutex_lock(&speedLock);
-	    	speed = 0;
+	    	targetSpeed = 0;
 	    	pthread_mutex_unlock(&speedLock);
 			break;
 		}
 	} while (c != '.');
 
-	stopspeedControlThread = true;
+	stopSpeedControlThread = true;
 	motorsStop();
 	driverVoltageOff();
 
