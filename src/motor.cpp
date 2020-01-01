@@ -2,6 +2,8 @@
 #include <sstream>
 #include <string.h>
 #include <signal.h>
+#include <math.h>
+#include <map>
 
 #include <wiringPi.h>
 #include <mcp23017.h>
@@ -19,13 +21,34 @@ using namespace std;
 #define MOTOR_RIGHT_PWM 23 // BCM=13, physical=33
 #define MOTOR_RIGHT_DIR	27 // BCM=16, physical=36
 
+#define MAX_SPEED 2050 // mm/s
+
 // mcp23017
 #define PIN_12V_ENABLE	110
 
 static bool stopSpeedControlThread = false;
 static bool orientationThreadInit = false;
-static double targetSpeed = 0;
+static double speed = 0;
+static map<int, int> speedMapping;
 static pthread_mutex_t speedLock = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
+
+void buildSpeedMapping() {
+	double a = 15.0654;
+	double b = 1.420508;
+	double c = -0.001347318;
+	double d = 7.702788e-7;
+	double e = -2.205491e-10;
+	double f = 2.810674e-14;
+
+	for (int i = 1; i <= MAX_SPEED; i++) {
+		// quintic regression
+		double digit = (a) + (b * i) + (c * pow(i,2)) + (d * pow(i,3)) + (e * pow(i,4)) + (f * pow(i,5));
+		speedMapping[i] = round(digit);
+//		cout << i << ": " << round(digit) << endl;
+	}
+
+	speedMapping[0] = 0;
+}
 
 void driverVoltageOn() {
 	i2c0Lock();
@@ -53,19 +76,29 @@ void errorAndExit(const char *msg) {
 }
 
 void applySpeedToWheels(double left, double right) {
+	if (left > MAX_SPEED) left = MAX_SPEED;
+	else if (left < -MAX_SPEED) left = -MAX_SPEED;
+	if (right > MAX_SPEED) right = MAX_SPEED;
+	else if (right < -MAX_SPEED) right = -MAX_SPEED;
+
+	int realLeft = speedMapping[abs(round(left))];
+	int realRight = speedMapping[abs(round(right))];
+
+//	printf("%f,%f,%d,%d\n", left, right, realLeft, realRight);
+
 	if (left > 0) {
 		digitalWrite(MOTOR_LEFT_DIR, 1);
 	} else  {
 		digitalWrite(MOTOR_LEFT_DIR, 0);
 	}
-	pwmWrite(MOTOR_LEFT_PWM, abs(left));
+	pwmWrite(MOTOR_LEFT_PWM, realLeft);
 
 	if (right > 0) {
 		digitalWrite(MOTOR_RIGHT_DIR, 1);
 	} else {
 		digitalWrite(MOTOR_RIGHT_DIR, 0);
 	}
-	pwmWrite(MOTOR_RIGHT_PWM, abs(right));
+	pwmWrite(MOTOR_RIGHT_PWM, realRight);
 }
 
 void *speedControlThread(void *vargp) {
@@ -88,17 +121,15 @@ void *speedControlThread(void *vargp) {
 	PID pid;
 	orientationThreadInit = true;
 	bool driving = false;
-	double speed = 0;
 
 	while (!stopSpeedControlThread) {
-		if (targetSpeed == 0) {
+		if (speed == 0) {
 			driving = false;
 			imu.calibrateGyro();
 		} else {
 			// first time driving: setup PID controller
 			if (!driving) {
-				pid = PID(20, 1024, -1024, 100, 0.7, 0.002);
-				speed = 0;
+				pid = PID(20, MAX_SPEED, -MAX_SPEED, 100, 10, 0.002);
 			}
 			driving = true;
 		}
@@ -121,17 +152,11 @@ void *speedControlThread(void *vargp) {
 			}
 
 			pthread_mutex_lock(&speedLock);
-			if (speed < targetSpeed) {
-				speed += min(50.0, targetSpeed - speed);
-			} else if (speed > targetSpeed) {
-				speed -= min(50.0, speed - targetSpeed);
-			}
-			pthread_mutex_unlock(&speedLock);
-
 			left += speed;
 			right += speed;
+			pthread_mutex_unlock(&speedLock);
 
-			if (!stopSpeedControlThread && targetSpeed != 0) {
+			if (!stopSpeedControlThread && speed != 0) {
 				applySpeedToWheels(left, right);
 //				printf("%f,%f,%f,%f\n", angleDelta, diff, left, right);
 			}
@@ -170,6 +195,8 @@ int main(int argc, char *argv[]) {
 	err = pthread_detach(threadId);
 	if (err) errorAndExit("Failed to detach Thread");
 
+	buildSpeedMapping();
+
 	while (!orientationThreadInit) {
 		delay(100);
 	}
@@ -191,28 +218,37 @@ int main(int argc, char *argv[]) {
 	motorsStop();
 	driverVoltageOn();
 
-	int c;
+//	int c;
+//	do {
+//		c = getchar();
+//		switch (c) {
+//		case 'w':
+//	    	pthread_mutex_lock(&speedLock);
+//	    	speed += 100;
+//	    	pthread_mutex_unlock(&speedLock);
+//			break;
+//		case 's':
+//	    	pthread_mutex_lock(&speedLock);
+//	    	speed -= 100;
+//	    	pthread_mutex_unlock(&speedLock);
+//			break;
+//		case ' ':
+//			motorsStop();
+//	    	pthread_mutex_lock(&speedLock);
+//	    	speed = 0;
+//	    	pthread_mutex_unlock(&speedLock);
+//			break;
+//		}
+//	} while (c != '.');
+
+	int s;
 	do {
-		c = getchar();
-		switch (c) {
-		case 'w':
-	    	pthread_mutex_lock(&speedLock);
-	    	targetSpeed += 100;
-	    	pthread_mutex_unlock(&speedLock);
-			break;
-		case 's':
-	    	pthread_mutex_lock(&speedLock);
-	    	targetSpeed -= 100;
-	    	pthread_mutex_unlock(&speedLock);
-			break;
-		case ' ':
-			motorsStop();
-	    	pthread_mutex_lock(&speedLock);
-	    	targetSpeed = 0;
-	    	pthread_mutex_unlock(&speedLock);
-			break;
-		}
-	} while (c != '.');
+		cin >> s;
+		if (s == 0) motorsStop();
+		pthread_mutex_lock(&speedLock);
+		speed = s;
+		pthread_mutex_unlock(&speedLock);
+	} while (1);
 
 	stopSpeedControlThread = true;
 	motorsStop();
