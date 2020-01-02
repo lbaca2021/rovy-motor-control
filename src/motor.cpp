@@ -30,8 +30,10 @@ using namespace std;
 static bool stopSpeedControlThread = false;
 static bool orientationThreadInit = false;
 static double speed = 0;
+static double orientation = 0;
 static map<int, int> speedMapping;
 static pthread_mutex_t speedLock = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
+static pthread_mutex_t orientationLock = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
 
 //**************** terminal adjustments (read key without RETURN) ***************************
 static struct termios old, current;
@@ -139,7 +141,7 @@ void applySpeedToWheels(double left, double right) {
 
 void *speedControlThread(void *vargp) {
     // Start the MPU9250
-	MPU9250_Master_I2C imu(MPUIMU::AFS_2G, MPUIMU::GFS_250DPS, MPU9250::MFS_16BITS, MPU9250::M_100Hz, 0x04);
+	MPU9250_Master_I2C imu(MPUIMU::AFS_2G, MPUIMU::GFS_1000DPS, MPU9250::MFS_16BITS, MPU9250::M_100Hz, 0x04);
 	switch (imu.begin()) {
 	case MPUIMU::ERROR_NONE:
 		break;
@@ -165,14 +167,19 @@ void *speedControlThread(void *vargp) {
 		} else {
 			// first time driving: setup PID controller
 			if (!driving) {
-				pid = PID(20, MAX_SPEED, -MAX_SPEED, 100, 10, 0.002);
+				pid = PID(20, MAX_SPEED, -MAX_SPEED, 70, 1, 0.002);
 			}
 			driving = true;
 		}
 
 		if (driving) {
+			pthread_mutex_lock(&orientationLock);
+			double o = orientation;
+			pthread_mutex_unlock(&orientationLock);
+
 			bool invert;
-			double angleDelta = imu.getAngleDelta(invert);
+			double angleDelta = imu.getAngleDelta(invert, o);
+
 			if (invert) pid.invert();
 			double diff = pid.calculate(0, angleDelta);
 
@@ -194,7 +201,7 @@ void *speedControlThread(void *vargp) {
 
 			if (!stopSpeedControlThread && speed != 0) {
 				applySpeedToWheels(left, right);
-//				printf("%f,%f,%f,%f\n", angleDelta, diff, left, right);
+//				printf("%f,%f,%f\n", angleDelta, o, diff);
 			}
 		}
 	}
@@ -261,9 +268,17 @@ int main(int argc, char *argv[]) {
 		switch (c) {
 		case 68:
 			//left
+			pthread_mutex_lock(&orientationLock);
+			orientation += 45;
+			if (orientation >= 360) orientation -= 360;
+			pthread_mutex_unlock(&orientationLock);
 			break;
 		case 67:
 			//right
+			pthread_mutex_lock(&orientationLock);
+			orientation -= 45;
+			if (orientation < 0) orientation += 360;
+			pthread_mutex_unlock(&orientationLock);
 			break;
 		case 65:
 			//up
