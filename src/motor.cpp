@@ -159,6 +159,8 @@ void *speedControlThread(void *vargp) {
 	PID pid;
 	orientationThreadInit = true;
 	bool driving = false;
+	double angleDeltaAvg = 0;
+	int notMovingCounter = 0;
 
 	while (!stopSpeedControlThread) {
 		if (speed == 0) {
@@ -180,6 +182,31 @@ void *speedControlThread(void *vargp) {
 			bool invert;
 			double angleDelta = imu.getAngleDelta(invert, o);
 
+			pthread_mutex_lock(&speedLock);
+			double s = speed;
+			pthread_mutex_unlock(&speedLock);
+
+			// if we're turning on the spot (s == 1), check if we've
+			// come to a stop already and if so, stop motors
+			if (s == 1) {
+				double d = abs(angleDelta);
+				angleDeltaAvg = (angleDeltaAvg * 10 + d) / 11;
+
+				// if deviation is less then 0.5 degrees for 50 times
+				// we assume that we've come to a stop
+				if (d - angleDeltaAvg < 0.5) notMovingCounter++;
+				else notMovingCounter = 0;
+
+				if (notMovingCounter > 50) {
+					pthread_mutex_lock(&speedLock);
+					speed = 0;
+					pthread_mutex_unlock(&speedLock);
+					motorsStop();
+					notMovingCounter = 0;
+					angleDeltaAvg = 0;
+				}
+			}
+
 			if (invert) pid.invert();
 			double diff = pid.calculate(0, angleDelta);
 
@@ -194,14 +221,12 @@ void *speedControlThread(void *vargp) {
 				right = half * -1;
 			}
 
-			pthread_mutex_lock(&speedLock);
-			left += speed;
-			right += speed;
-			pthread_mutex_unlock(&speedLock);
+			left += s;
+			right += s;
 
 			if (!stopSpeedControlThread && speed != 0) {
 				applySpeedToWheels(left, right);
-//				printf("%f,%f,%f\n", angleDelta, o, diff);
+//				printf("%f,%f,%d\n", angleDelta, angleDeltaAvg, notMovingCounter);
 			}
 		}
 	}
@@ -272,6 +297,14 @@ int main(int argc, char *argv[]) {
 			orientation += 45;
 			if (orientation >= 360) orientation -= 360;
 			pthread_mutex_unlock(&orientationLock);
+
+			// set speed to something very low but not 0
+			// so that PID controller kicks in
+			if (speed == 0) {
+				pthread_mutex_lock(&speedLock);
+				speed = 1;
+				pthread_mutex_unlock(&speedLock);
+			}
 			break;
 		case 67:
 			//right
@@ -279,6 +312,14 @@ int main(int argc, char *argv[]) {
 			orientation -= 45;
 			if (orientation < 0) orientation += 360;
 			pthread_mutex_unlock(&orientationLock);
+
+			// set speed to something very low but not 0
+			// so that PID controller kicks in
+			if (speed == 0) {
+				pthread_mutex_lock(&speedLock);
+				speed = 1;
+				pthread_mutex_unlock(&speedLock);
+			}
 			break;
 		case 65:
 			//up
@@ -294,10 +335,10 @@ int main(int argc, char *argv[]) {
 			break;
 		case ' ':
 			//stop
-			motorsStop();
 			pthread_mutex_lock(&speedLock);
 			speed = 0;
 			pthread_mutex_unlock(&speedLock);
+			motorsStop();
 			break;
 		}
 	} while (1);
