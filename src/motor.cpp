@@ -235,9 +235,11 @@ void *speedControlThread(void *vargp) {
 }
 
 void terminate(int s){
-	driverVoltageOff();
+	stopSpeedControlThread = true;
 	i2c0Unlock();
+	driverVoltageOff();
 	resetTermios();
+
 	exit(0);
 }
 
@@ -258,6 +260,9 @@ int main(int argc, char *argv[]) {
 	pinMode(MOTOR_RIGHT_PWM, PWM_OUTPUT);
 	pinMode(MOTOR_RIGHT_DIR, OUTPUT);
 
+	motorsStop();
+	driverVoltageOn();
+
 	pthread_t threadId;
 	int err = pthread_create(&threadId, NULL, &speedControlThread, NULL);
 	if (err) errorAndExit("Thread creation failed");
@@ -271,21 +276,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	cout << "Init done!" << endl;
-
-//	// testing loop
-//	while (1) {
-//		delay(1000 * 7);
-//		motorsStop();
-//		driverVoltageOn();
-//		speed = 500;
-//		delay(1000 * 200);
-//		motorsStop();
-//		driverVoltageOff();
-//		speed = 0;
-//	}
-
-	motorsStop();
-	driverVoltageOn();
 
 	char c;
 	do {
