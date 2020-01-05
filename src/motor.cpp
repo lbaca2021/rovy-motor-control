@@ -27,8 +27,12 @@ using namespace std;
 // mcp23017
 #define PIN_12V_ENABLE	110
 
-static bool stopSpeedControlThread = false;
-static bool orientationThreadInit = false;
+#define SCT_NOT_INITIALIZED	0
+#define SCT_RUNNING 		1
+#define SCT_DO_STOP			2
+#define SCT_STOPPED			3
+
+static int speedControlThreadStatus = SCT_NOT_INITIALIZED;
 static double speed = 0;
 static double orientation = 0;
 static map<int, int> speedMapping;
@@ -156,13 +160,16 @@ void *speedControlThread(void *vargp) {
 	}
 	imu.setMyMagCalibration();
 
+	motorsStop();
+	driverVoltageOn();
+
 	PID pid;
-	orientationThreadInit = true;
+	speedControlThreadStatus = SCT_RUNNING;
 	bool driving = false;
 	double angleDeltaAvg = 0;
 	int notMovingCounter = 0;
 
-	while (!stopSpeedControlThread) {
+	while (speedControlThreadStatus == SCT_RUNNING) {
 		if (speed == 0) {
 			driving = false;
 			imu.calibrateGyro();
@@ -224,20 +231,24 @@ void *speedControlThread(void *vargp) {
 			left += s;
 			right += s;
 
-			if (!stopSpeedControlThread && speed != 0) {
+			if (speedControlThreadStatus == SCT_RUNNING && speed != 0) {
 				applySpeedToWheels(left, right);
 //				printf("%f,%f,%d\n", angleDelta, angleDeltaAvg, notMovingCounter);
 			}
 		}
 	}
 
+	driverVoltageOff();
+	speedControlThreadStatus = SCT_STOPPED;
+
     return NULL;
 }
 
 void terminate(int s){
-	stopSpeedControlThread = true;
-	i2c0Unlock();
-	driverVoltageOff();
+	speedControlThreadStatus = SCT_DO_STOP;
+	while (speedControlThreadStatus == SCT_DO_STOP) {
+		delay(50);
+	}
 	resetTermios();
 
 	exit(0);
@@ -261,7 +272,6 @@ int main(int argc, char *argv[]) {
 	pinMode(MOTOR_RIGHT_DIR, OUTPUT);
 
 	motorsStop();
-	driverVoltageOn();
 
 	pthread_t threadId;
 	int err = pthread_create(&threadId, NULL, &speedControlThread, NULL);
@@ -271,8 +281,8 @@ int main(int argc, char *argv[]) {
 
 	buildSpeedMapping();
 
-	while (!orientationThreadInit) {
-		delay(100);
+	while (speedControlThreadStatus == SCT_NOT_INITIALIZED) {
+		delay(50);
 	}
 
 	cout << "Init done!" << endl;
