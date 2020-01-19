@@ -25,7 +25,7 @@ using namespace std;
 #define MAX_SPEED 2050 // mm/s
 
 // mcp23017
-#define PIN_12V_ENABLE	110
+#define PIN_12V_ENABLE	100
 
 #define SCT_NOT_INITIALIZED	0
 #define SCT_RUNNING 		1
