@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 #include <string.h>
 #include <signal.h>
 #include <math.h>
@@ -12,8 +13,9 @@
 #include <MPU9250_Master_I2C.h>
 
 #include <gpio_mutex.h>
+#include <pid.h>
 
-#include "pid.h"
+#include "hc-sr04.h"
 
 using namespace std;
 
@@ -27,12 +29,13 @@ using namespace std;
 // mcp23017
 #define PIN_12V_ENABLE	100
 
-#define SCT_NOT_INITIALIZED	0
-#define SCT_RUNNING 		1
-#define SCT_DO_STOP			2
-#define SCT_STOPPED			3
+#define T_NOT_INITIALIZED	0
+#define T_RUNNING 			1
+#define T_DO_STOP			2
+#define T_STOPPED			3
 
-static int speedControlThreadStatus = SCT_NOT_INITIALIZED;
+static int speedControlThreadStatus = T_NOT_INITIALIZED;
+static int distanceMeasureThreadStatus = T_NOT_INITIALIZED;
 static double speed = 0;
 static double orientation = 0;
 static map<int, int> speedMapping;
@@ -164,12 +167,12 @@ void *speedControlThread(void *vargp) {
 	driverVoltageOn();
 
 	PID pid;
-	speedControlThreadStatus = SCT_RUNNING;
+	speedControlThreadStatus = T_RUNNING;
 	bool driving = false;
 	double angleDeltaAvg = 0;
 	int notMovingCounter = 0;
 
-	while (speedControlThreadStatus == SCT_RUNNING) {
+	while (speedControlThreadStatus == T_RUNNING) {
 		if (speed == 0) {
 			driving = false;
 			imu.calibrateGyro();
@@ -231,7 +234,7 @@ void *speedControlThread(void *vargp) {
 			left += s;
 			right += s;
 
-			if (speedControlThreadStatus == SCT_RUNNING && speed != 0) {
+			if (speedControlThreadStatus == T_RUNNING && speed != 0) {
 				applySpeedToWheels(left, right);
 //				printf("%f,%f,%d\n", angleDelta, angleDeltaAvg, notMovingCounter);
 			}
@@ -239,14 +242,40 @@ void *speedControlThread(void *vargp) {
 	}
 
 	driverVoltageOff();
-	speedControlThreadStatus = SCT_STOPPED;
+	speedControlThreadStatus = T_STOPPED;
 
     return NULL;
 }
 
+void *distanceMeasureThread(void *vargp) {
+	HCSR04 hCSR04;
+	distanceMeasureThreadStatus = T_RUNNING;
+
+	while (distanceMeasureThreadStatus == T_RUNNING) {
+		double s2 = hCSR04.getFilteredDistance(2); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s5 = hCSR04.getFilteredDistance(5); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s6 = hCSR04.getFilteredDistance(6); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s1 = hCSR04.getFilteredDistance(1); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s7 = hCSR04.getFilteredDistance(7); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s4 = hCSR04.getFilteredDistance(4); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s3 = hCSR04.getFilteredDistance(3); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+
+		cout << fixed << setprecision(2)
+			<< s1 << "," << s2 << "," << s3 << "," << s4 << "," << s5 << "," << s6 << "," << s7
+			<< endl;
+
+		delay(20);
+	}
+
+	distanceMeasureThreadStatus = T_STOPPED;
+
+	return NULL;
+}
+
 void terminate(int s){
-	speedControlThreadStatus = SCT_DO_STOP;
-	while (speedControlThreadStatus == SCT_DO_STOP) {
+	distanceMeasureThreadStatus = T_DO_STOP;
+	speedControlThreadStatus = T_DO_STOP;
+	while (speedControlThreadStatus == T_DO_STOP || distanceMeasureThreadStatus == T_DO_STOP) {
 		delay(50);
 	}
 	resetTermios();
@@ -279,9 +308,14 @@ int main(int argc, char *argv[]) {
 	err = pthread_detach(threadId);
 	if (err) errorAndExit("Failed to detach Thread");
 
+	err = pthread_create(&threadId, NULL, &distanceMeasureThread, NULL);
+	if (err) errorAndExit("Thread creation failed");
+	err = pthread_detach(threadId);
+	if (err) errorAndExit("Failed to detach Thread");
+
 	buildSpeedMapping();
 
-	while (speedControlThreadStatus == SCT_NOT_INITIALIZED) {
+	while (speedControlThreadStatus == T_NOT_INITIALIZED) {
 		delay(50);
 	}
 
