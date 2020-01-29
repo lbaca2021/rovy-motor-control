@@ -5,6 +5,8 @@
 #include <signal.h>
 #include <math.h>
 #include <map>
+#include <random>
+#include <functional>
 #include <termios.h>
 
 #include <wiringPi.h>
@@ -247,22 +249,90 @@ void *speedControlThread(void *vargp) {
     return NULL;
 }
 
+#define CHANGE_DIR_NO		0
+#define CHANGE_DIR_LEFT 	1
+#define CHANGE_DIR_RIGHT 	2
+#define CHANGE_DIR_EITHER 	3
+
 void *distanceMeasureThread(void *vargp) {
 	HCSR04 hCSR04;
 	distanceMeasureThreadStatus = T_RUNNING;
+	auto gen = bind(uniform_int_distribution<>(0,1), default_random_engine());
+	double oldSpeed = 0;
+	bool resetFilter = false;
+	int changeDir = CHANGE_DIR_NO;
 
 	while (distanceMeasureThreadStatus == T_RUNNING) {
-		double s2 = hCSR04.getFilteredDistance(2); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s5 = hCSR04.getFilteredDistance(5); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s6 = hCSR04.getFilteredDistance(6); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s1 = hCSR04.getFilteredDistance(1); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s7 = hCSR04.getFilteredDistance(7); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s4 = hCSR04.getFilteredDistance(4); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
-		double s3 = hCSR04.getFilteredDistance(3); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s2 = hCSR04.getFilteredDistance(2, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s5 = hCSR04.getFilteredDistance(5, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s6 = hCSR04.getFilteredDistance(6, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s1 = hCSR04.getFilteredDistance(1, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s7 = hCSR04.getFilteredDistance(7, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s4 = hCSR04.getFilteredDistance(4, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
+		double s3 = hCSR04.getFilteredDistance(3, resetFilter); delay(20); if (distanceMeasureThreadStatus != T_RUNNING) break;
 
 		cout << fixed << setprecision(2)
-			<< s1 << "," << s2 << "," << s3 << "," << s4 << "," << s5 << "," << s6 << "," << s7
+			<< "s1:" << s1 << ", s2:" << s2 << ", s3:" << s3 << ", s4:" << s4 << ", s5:" << s5 << ", s6:" << s6 << ", s7:" << s7
 			<< endl;
+
+		if (speed == -1) {
+			pthread_mutex_lock(&speedLock);
+			speed = oldSpeed;
+			pthread_mutex_unlock(&speedLock);
+
+			resetFilter = false;
+		}
+
+		if (s1 < 30 || s2 < 30 || s3 < 30) {
+			if (s6 < 30) {
+				changeDir = CHANGE_DIR_LEFT;
+			} else if (s7 < 30) {
+				changeDir = CHANGE_DIR_RIGHT;
+			} else {
+				changeDir = CHANGE_DIR_EITHER;
+			}
+		} else if (s4 < 15) {
+			changeDir = CHANGE_DIR_RIGHT;
+		} else if (s5 < 15) {
+			changeDir = CHANGE_DIR_LEFT;
+		}
+
+		if (changeDir != CHANGE_DIR_NO) {
+			if (speed > 1) {
+				pthread_mutex_lock(&speedLock);
+				oldSpeed = speed;
+				speed = -1;
+				pthread_mutex_unlock(&speedLock);
+				motorsStop();
+
+				double newOrientation;
+
+				switch (changeDir) {
+				case CHANGE_DIR_LEFT:
+					newOrientation = -90;
+					break;
+				case CHANGE_DIR_RIGHT:
+					newOrientation = 90;
+					break;
+				case CHANGE_DIR_EITHER:
+					if (gen()) newOrientation = -90;
+					else newOrientation = 90;
+					break;
+				}
+
+				pthread_mutex_lock(&orientationLock);
+				orientation += newOrientation;
+				if (orientation >= 360) orientation -= 360;
+				pthread_mutex_unlock(&orientationLock);
+
+				resetFilter = true;
+				cout << "changed direction" << endl;
+
+				delay(1000);
+			}
+
+			changeDir = CHANGE_DIR_NO;
+		}
 
 		delay(20);
 	}

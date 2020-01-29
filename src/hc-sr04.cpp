@@ -44,24 +44,24 @@ HCSR04::HCSR04() {
 
 HCSR04::~HCSR04(){}
 
-double HCSR04::getFilteredDistance(int index) {
+double HCSR04::getFilteredDistance(int index, bool reset) {
 	double d = 0;
 
 	switch (index) {
 	case 1:
-		d = filter(&s1Prev_, getDistance(HCSR04_TRIGGER_PIN_1)); break;
+		d = filter(&s1Prev_, getDistance(HCSR04_TRIGGER_PIN_1), reset); break;
 	case 2:
-		d = filter(&s2Prev_, getDistance(HCSR04_TRIGGER_PIN_2)); break;
+		d = filter(&s2Prev_, getDistance(HCSR04_TRIGGER_PIN_2), reset); break;
 	case 3:
-		d = filter(&s3Prev_, getDistance(HCSR04_TRIGGER_PIN_3)); break;
+		d = filter(&s3Prev_, getDistance(HCSR04_TRIGGER_PIN_3), reset); break;
 	case 4:
-		d = filter(&s4Prev_, getDistance(HCSR04_TRIGGER_PIN_4)); break;
+		d = filter(&s4Prev_, getDistance(HCSR04_TRIGGER_PIN_4), reset); break;
 	case 5:
-		d = filter(&s5Prev_, getDistance(HCSR04_TRIGGER_PIN_5)); break;
+		d = filter(&s5Prev_, getDistance(HCSR04_TRIGGER_PIN_5), reset); break;
 	case 6:
-		d = filter(&s6Prev_, getDistance(HCSR04_TRIGGER_PIN_6)); break;
+		d = filter(&s6Prev_, getDistance(HCSR04_TRIGGER_PIN_6), reset); break;
 	case 7:
-		d = filter(&s7Prev_, getDistance(HCSR04_TRIGGER_PIN_7)); break;
+		d = filter(&s7Prev_, getDistance(HCSR04_TRIGGER_PIN_7), reset); break;
 	}
 
 	return d;
@@ -103,9 +103,9 @@ double HCSR04::getDistance(int triggerPin) {
 	return duration * 17150;
 }
 
-double HCSR04::filter(double *previous, double current) {
+double HCSR04::filter(double *previous, double current, bool reset) {
 	double ret = current;
-	if ((current - *previous) > 50) {
+	if (!reset && (current - *previous) > 50) {
 		ret = *previous;
 		*previous += 50;
 	} else {
