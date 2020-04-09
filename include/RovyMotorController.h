@@ -20,7 +20,7 @@ public:
 
     virtual int start(double speedLimit) = 0;
     virtual void stop() = 0;
-    virtual void manualDrive(int command) = 0;
+    virtual void drive(double linearVelocity, double angularVelocity) = 0;
 
     static RovyMotorController* Create();
 protected:

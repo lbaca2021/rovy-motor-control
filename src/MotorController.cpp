@@ -65,53 +65,28 @@ int MotorController::start(double speedLimit) {
 	return 0;
 }
 
-void MotorController::manualDrive(int command) {
-    switch(command) {
-    case MANUAL_LEFT:
-        pthread_mutex_lock(&orientationLock_);
-        orientation_ += 1;
-        if (orientation_ >= 360) orientation_ -= 360;
-        pthread_mutex_unlock(&orientationLock_);
-
+void MotorController::drive(double linearVelocity, double angularVelocity) {
+    if (linearVelocity == 0 && angularVelocity != 0) {
         // set speed to something very low but not 0
         // so that PID controller kicks in
-        if (speed_ == 0) {
-            pthread_mutex_lock(&speedLock_);
-            speed_ = 1;
-            pthread_mutex_unlock(&speedLock_);
-        }
-        break;
-    case MANUAL_RIGHT:
-        pthread_mutex_lock(&orientationLock_);
-        orientation_ -= 1;
-        if (orientation_ < 0) orientation_ += 360;
-        pthread_mutex_unlock(&orientationLock_);
-
-        // set speed to something very low but not 0
-        // so that PID controller kicks in
-        if (speed_ == 0) {
-            pthread_mutex_lock(&speedLock_);
-            speed_ = 1;
-            pthread_mutex_unlock(&speedLock_);
-        }
-        break;
-    case MANUAL_UP:
-        pthread_mutex_lock(&speedLock_);
-        speed_ += 100;
-        pthread_mutex_unlock(&speedLock_);
-        break;
-    case MANUAL_DOWN:
-        pthread_mutex_lock(&speedLock_);
-        speed_ -= 100;
-        pthread_mutex_unlock(&speedLock_);
-        break;
-    case MANUAL_STOP:
-        pthread_mutex_lock(&speedLock_);
-        speed_ = 0;
-        pthread_mutex_unlock(&speedLock_);
-        motorsStop();
-        break;
+        linearVelocity = 0.001;
     }
+
+    pthread_mutex_lock(&speedLock_);
+    speed_ = linearVelocity * 1000;
+    pthread_mutex_unlock(&speedLock_);
+
+    pthread_mutex_lock(&orientationLock_);
+    orientation_ += angularVelocity * timer_.next();
+    if (orientation_ >= 360) orientation_ -= 360;
+    else if (orientation_ < 0) orientation_ += 360;
+    pthread_mutex_unlock(&orientationLock_);
+
+    if (linearVelocity == 0 && angularVelocity == 0) {
+        motorsStop();
+    }
+
+    printf("%f/%f\n", speed_, orientation_);
 }
 
 void MotorController::motorsStop() {
@@ -197,12 +172,12 @@ void MotorController::speedControlThread() {
                 double d = abs(angleDelta);
                 angleDeltaAvg = (angleDeltaAvg * 10 + d) / 11;
 
-                // if deviation is less then 0.5 degrees for 50 times
+                // if deviation is less then 0.5 degrees for 100 times
                 // we assume that we've come to a stop
                 if (d - angleDeltaAvg < 0.5) notMovingCounter++;
                 else notMovingCounter = 0;
 
-                if (notMovingCounter > 50) {
+                if (notMovingCounter > 100) {
                     pthread_mutex_lock(&speedLock_);
                     speed_ = 0;
                     pthread_mutex_unlock(&speedLock_);
@@ -235,7 +210,6 @@ void MotorController::speedControlThread() {
             }
         }
     }
-
 
     driverVoltageOff();
     speedControlThreadStatus_ = T_STOPPED;

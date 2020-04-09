@@ -9,6 +9,7 @@
 #define MOTORCONTROLLER_HPP_
 
 #include "RovyMotorController.h"
+#include "timer.h"
 
 #include <iostream>
 #include <pthread.h>
@@ -38,7 +39,7 @@ public:
 
     int start(double speedLimit);
     void stop();
-    void manualDrive(int command);
+    void drive(double linearVelocity, double angularVelocity);
 
 private:
     void motorsStop();
@@ -55,6 +56,7 @@ private:
     map<int, int> speedMapping_;
     pthread_mutex_t speedLock_;
     pthread_mutex_t orientationLock_;
+    Timer timer_;
 };
 
 RovyMotorController* RovyMotorController::Create() {
