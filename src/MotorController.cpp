@@ -16,6 +16,7 @@
 
 #include <gpio_mutex.h>
 #include <pid.h>
+#include <mutex_t265.h>
 
 #define MOTOR_LEFT_PWM  26 // BCM=12, physical=32
 #define MOTOR_LEFT_DIR	22 // BCM=6,  physical=31
@@ -85,8 +86,6 @@ void MotorController::drive(double linearVelocity, double angularVelocity) {
     if (linearVelocity == 0 && angularVelocity == 0) {
         motorsStop();
     }
-
-    printf("%f/%f\n", speed_, orientation_);
 }
 
 void MotorController::motorsStop() {
@@ -135,20 +134,26 @@ void MotorController::speedControlThread() {
     motorsStop();
     driverVoltageOn();
 
-    PID pid;
+    PID angleDiffPid, linearVelPid;
     speedControlThreadStatus_ = T_RUNNING;
     bool driving = false;
     double angleDeltaAvg = 0;
     int notMovingCounter = 0;
 
     while (speedControlThreadStatus_ == T_RUNNING) {
-        if (speed_ == 0) {
+        pthread_mutex_lock(&speedLock_);
+        if (speed_ > speedLimit_) speed_ = speedLimit_;
+        double targetSpeed = speed_;
+        pthread_mutex_unlock(&speedLock_);
+
+        if (targetSpeed == 0) {
             driving = false;
             imu.calibrateGyro();
         } else {
             // first time driving: setup PID controller
             if (!driving) {
-                pid = PID(20, MAX_SPEED, -MAX_SPEED, 70, 1, 0.002);
+                angleDiffPid = PID(20, MAX_SPEED, -MAX_SPEED, 70, 1, 0.002);
+                linearVelPid = PID(5, speedLimit_, -speedLimit_, 0.001, 0.04, 0.005);
             }
             driving = true;
         }
@@ -161,14 +166,20 @@ void MotorController::speedControlThread() {
             bool invert;
             double angleDelta = imu.getAngleDelta(invert, o);
 
-            pthread_mutex_lock(&speedLock_);
-            if (speed_ > speedLimit_) speed_ = speedLimit_;
-            double s = speed_;
-            pthread_mutex_unlock(&speedLock_);
+            // get current linear velocity from odometry (stored in shared memory)
+            float linearVelocity = 0, angularVelocity = 0, gyroZ;
+            t265_get_data(&linearVelocity, &angularVelocity, &gyroZ);
+            linearVelocity *= 1000;
+
+            double outSpeed = targetSpeed;
+            if (targetSpeed != 0 && targetSpeed != 1 && linearVelocity != 0) {
+                outSpeed = linearVelPid.calculate(targetSpeed, linearVelocity);
+                cout << targetSpeed << "," << linearVelocity << "," << outSpeed << endl;
+            }
 
             // if we're turning on the spot (s == 1), check if we've
             // come to a stop already and if so, stop motors
-            if (s == 1) {
+            if (outSpeed == 1) {
                 double d = abs(angleDelta);
                 angleDeltaAvg = (angleDeltaAvg * 10 + d) / 11;
 
@@ -180,6 +191,7 @@ void MotorController::speedControlThread() {
                 if (notMovingCounter > 100) {
                     pthread_mutex_lock(&speedLock_);
                     speed_ = 0;
+                    targetSpeed = speed_;
                     pthread_mutex_unlock(&speedLock_);
                     motorsStop();
                     notMovingCounter = 0;
@@ -187,8 +199,8 @@ void MotorController::speedControlThread() {
                 }
             }
 
-            if (invert) pid.invert();
-            double diff = pid.calculate(0, angleDelta);
+            if (invert) angleDiffPid.invert();
+            double diff = angleDiffPid.calculate(0, angleDelta);
 
             double half = abs(diff) * 0.5;
             double left = 0, right = 0;
@@ -201,10 +213,10 @@ void MotorController::speedControlThread() {
                 right = half * -1;
             }
 
-            left += s;
-            right += s;
+            left += outSpeed;
+            right += outSpeed;
 
-            if (speedControlThreadStatus_ == T_RUNNING && speed_ != 0) {
+            if (speedControlThreadStatus_ == T_RUNNING && targetSpeed != 0) {
                 applySpeedToWheels(left, right);
 //                printf("%f,%f,%d\n", angleDelta, angleDeltaAvg, notMovingCounter);
             }
