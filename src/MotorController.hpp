@@ -18,6 +18,7 @@
 using namespace std;
 
 #define MAX_SPEED 2050 // mm/s
+#define MAX_ROTATION 800
 
 #define T_NOT_INITIALIZED   0
 #define T_RUNNING           1
@@ -28,16 +29,16 @@ class MotorController : public RovyMotorController {
 public:
     MotorController() :
         speedControlThreadStatus_(T_NOT_INITIALIZED),
-        speed_(0),
+        linearVel_(0),
+        angularVel_(0),
         speedLimit_(MAX_SPEED),
-        orientation_(0)
+        rotationLimit_(MAX_ROTATION)
     {
-        speedLock_ = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
-        orientationLock_ = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
+        velocityLock_ = PTHREAD_MUTEX_INITIALIZER; // @suppress("Invalid arguments")
     }
     ~MotorController(){};
 
-    int start(double speedLimit);
+    int start(double speedLimit, double rotationLimit);
     void stop();
     void drive(double linearVelocity, double angularVelocity);
 
@@ -50,13 +51,10 @@ private:
     void applySpeedToWheels(double left, double right);
 
     int speedControlThreadStatus_;
-    double speed_;
-    double speedLimit_;
-    double orientation_;
+    double linearVel_, angularVel_;
+    double speedLimit_, rotationLimit_;
     map<int, int> speedMapping_;
-    pthread_mutex_t speedLock_;
-    pthread_mutex_t orientationLock_;
-    Timer timer_;
+    pthread_mutex_t velocityLock_;
 };
 
 RovyMotorController* RovyMotorController::Create() {

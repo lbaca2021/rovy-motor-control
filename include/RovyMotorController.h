@@ -18,7 +18,7 @@ class RovyMotorController {
 public:
     virtual ~RovyMotorController(){}
 
-    virtual int start(double speedLimit) = 0;
+    virtual int start(double speedLimit, double rotationLimit) = 0;
     virtual void stop() = 0;
     virtual void drive(double linearVelocity, double angularVelocity) = 0;
 

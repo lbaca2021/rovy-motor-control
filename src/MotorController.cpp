@@ -1,18 +1,10 @@
 #include "MotorController.hpp"
 
-#include <iostream>
-#include <sstream>
-#include <iomanip>
-#include <string.h>
-#include <signal.h>
 #include <math.h>
-#include <random>
 #include <thread>
 
 #include <wiringPi.h>
 #include <mcp23017.h>
-
-#include <MPU9250_Master_I2C.h>
 
 #include <gpio_mutex.h>
 #include <pid.h>
@@ -33,8 +25,9 @@ void MotorController::stop(){
 	}
 }
 
-int MotorController::start(double speedLimit) {
+int MotorController::start(double speedLimit, double rotationLimit) {
     speedLimit_ = speedLimit < MAX_SPEED ? speedLimit : MAX_SPEED;
+    rotationLimit_ = rotationLimit < MAX_ROTATION ? rotationLimit : MAX_ROTATION;
 
 	wiringPiSetup();
 
@@ -73,15 +66,10 @@ void MotorController::drive(double linearVelocity, double angularVelocity) {
         linearVelocity = 0.001;
     }
 
-    pthread_mutex_lock(&speedLock_);
-    speed_ = linearVelocity * 1000;
-    pthread_mutex_unlock(&speedLock_);
-
-    pthread_mutex_lock(&orientationLock_);
-    orientation_ += angularVelocity * timer_.next();
-    if (orientation_ >= 360) orientation_ -= 360;
-    else if (orientation_ < 0) orientation_ += 360;
-    pthread_mutex_unlock(&orientationLock_);
+    pthread_mutex_lock(&velocityLock_);
+    linearVel_ = linearVelocity * 1000;
+    angularVel_ = angularVelocity;
+    pthread_mutex_unlock(&velocityLock_);
 
     if (linearVelocity == 0 && angularVelocity == 0) {
         motorsStop();
@@ -108,117 +96,78 @@ void MotorController::buildSpeedMapping() {
         // quintic regression
         double digit = (a) + (b * i) + (c * pow(i,2)) + (d * pow(i,3)) + (e * pow(i,4)) + (f * pow(i,5));
         speedMapping_[i] = round(digit);
-//        cout << i << ": " << round(digit) << endl;
+        //cout << i << ": " << round(digit) << endl;
     }
 
     speedMapping_[0] = 0;
 }
 
 void MotorController::speedControlThread() {
-    // Start the MPU9250
-    MPU9250_Master_I2C imu(MPUIMU::AFS_2G, MPUIMU::GFS_1000DPS, MPU9250::MFS_16BITS, MPU9250::M_100Hz, 0x04);
-    switch (imu.begin()) {
-    case MPUIMU::ERROR_NONE:
-        break;
-    case MPUIMU::ERROR_CONNECT:
-        return;
-    case MPUIMU::ERROR_IMU_ID:
-        return;
-    case MPUIMU::ERROR_MAG_ID:
-        return;
-    case MPUIMU::ERROR_SELFTEST:
-        return;
-    }
-    imu.setMyMagCalibration();
-
     motorsStop();
     driverVoltageOn();
 
-    PID angleDiffPid, linearVelPid;
+    PID linearVelPid, angularVelPid;
     speedControlThreadStatus_ = T_RUNNING;
     bool driving = false;
-    double angleDeltaAvg = 0;
-    int notMovingCounter = 0;
+    uint oldIndex = 0;
+    int oldIndexCount = 0;
 
     while (speedControlThreadStatus_ == T_RUNNING) {
-        pthread_mutex_lock(&speedLock_);
-        if (speed_ > speedLimit_) speed_ = speedLimit_;
-        double targetSpeed = speed_;
-        pthread_mutex_unlock(&speedLock_);
+        delay(5);
+
+        pthread_mutex_lock(&velocityLock_);
+        if (linearVel_ > speedLimit_) linearVel_ = speedLimit_;
+        double targetSpeed = linearVel_;
+        if (angularVel_ > rotationLimit_) angularVel_ = rotationLimit_;
+        double targetTheta = angularVel_;
+        pthread_mutex_unlock(&velocityLock_);
 
         if (targetSpeed == 0) {
             driving = false;
-            imu.calibrateGyro();
         } else {
             // first time driving: setup PID controller
             if (!driving) {
-                angleDiffPid = PID(20, MAX_SPEED, -MAX_SPEED, 70, 1, 0.002);
                 linearVelPid = PID(5, speedLimit_, -speedLimit_, 0.001, 0.04, 0.005);
+                angularVelPid = PID(5, rotationLimit_, -rotationLimit_, 0.01, 0.1, 0.005);
             }
             driving = true;
         }
 
         if (driving) {
-            pthread_mutex_lock(&orientationLock_);
-            double o = orientation_;
-            pthread_mutex_unlock(&orientationLock_);
-
-            bool invert;
-            double angleDelta = imu.getAngleDelta(invert, o);
-
             // get current linear velocity from odometry (stored in shared memory)
-            float linearVelocity = 0, angularVelocity = 0, gyroZ;
-            t265_get_data(&linearVelocity, &angularVelocity, &gyroZ);
-            linearVelocity *= 1000;
+            uint index;
+            float linearVelocity = 0, angularVelocity = 0;
+            t265_get_data(&index, &linearVelocity, &angularVelocity);
+
+            // index shouldn't be the same, if so camera might have crashed and we should stop
+            if (index == oldIndex) {
+                if (oldIndexCount++ > 10) {
+                    motorsStop();
+                    pthread_mutex_lock(&velocityLock_);
+                    linearVel_ = 0;
+                    angularVel_ = 0;
+                    pthread_mutex_unlock(&velocityLock_);
+                    continue;
+                }
+            } else {
+                oldIndex = index;
+                oldIndexCount = 0;
+            }
 
             double outSpeed = targetSpeed;
-            if (targetSpeed != 0 && targetSpeed != 1 && linearVelocity != 0) {
-                outSpeed = linearVelPid.calculate(targetSpeed, linearVelocity);
-                cout << targetSpeed << "," << linearVelocity << "," << outSpeed << endl;
+            if (targetSpeed != 1) {
+                outSpeed = linearVelPid.calculate(targetSpeed, linearVelocity * 1000);
+                //cout << targetSpeed << "," << linearVelocity << "," << outSpeed << endl;
             }
 
-            // if we're turning on the spot (s == 1), check if we've
-            // come to a stop already and if so, stop motors
-            if (outSpeed == 1) {
-                double d = abs(angleDelta);
-                angleDeltaAvg = (angleDeltaAvg * 10 + d) / 11;
+            double outTheta = angularVelPid.calculate(targetTheta, angularVelocity);
+            //cout << targetTheta << "," << angularVelocity << "," << outTheta << endl;
 
-                // if deviation is less then 0.5 degrees for 100 times
-                // we assume that we've come to a stop
-                if (d - angleDeltaAvg < 0.5) notMovingCounter++;
-                else notMovingCounter = 0;
-
-                if (notMovingCounter > 100) {
-                    pthread_mutex_lock(&speedLock_);
-                    speed_ = 0;
-                    targetSpeed = speed_;
-                    pthread_mutex_unlock(&speedLock_);
-                    motorsStop();
-                    notMovingCounter = 0;
-                    angleDeltaAvg = 0;
-                }
-            }
-
-            if (invert) angleDiffPid.invert();
-            double diff = angleDiffPid.calculate(0, angleDelta);
-
-            double half = abs(diff) * 0.5;
-            double left = 0, right = 0;
-
-            if (diff > 0) {
-                left = half * -1;
-                right = half * 1;
-            } else {
-                left = half * 1;
-                right = half * -1;
-            }
-
-            left += outSpeed;
-            right += outSpeed;
+            double left = -outTheta*500 + outSpeed;
+            double right = outTheta*500 + outSpeed;
 
             if (speedControlThreadStatus_ == T_RUNNING && targetSpeed != 0) {
                 applySpeedToWheels(left, right);
-//                printf("%f,%f,%d\n", angleDelta, angleDeltaAvg, notMovingCounter);
             }
         }
     }
@@ -247,8 +196,6 @@ void MotorController::applySpeedToWheels(double left, double right) {
 
     int realLeft = speedMapping_[abs(round(left))];
     int realRight = speedMapping_[abs(round(right))];
-
-//    printf("%f,%f,%d,%d\n", left, right, realLeft, realRight);
 
     if (left > 0) {
         digitalWrite(MOTOR_LEFT_DIR, 1);
