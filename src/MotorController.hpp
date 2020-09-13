@@ -18,7 +18,7 @@
 using namespace std;
 
 #define MAX_SPEED 2050 // mm/s
-#define MAX_ROTATION 800
+#define MAX_ROTATION 4
 
 #define T_NOT_INITIALIZED   0
 #define T_RUNNING           1
