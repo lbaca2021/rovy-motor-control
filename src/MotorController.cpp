@@ -1,4 +1,5 @@
 #include "MotorController.hpp"
+#include "RovyMotorController.h"
 
 #include <math.h>
 #include <thread>
